@@ -4475,7 +4475,7 @@ mod tests {
             1,
             connection
                 .execute(
-                    &fix_parameters(&include_sql!("pg/register_broker.sql"))?,
+                    &fix_parameters(&include_sql!("sql/register_broker.sql"))?,
                     &[cluster]
                 )
                 .await?
@@ -4488,7 +4488,7 @@ mod tests {
 
         let mut rows = connection
             .query(
-                &fix_parameters(&include_sql!("pg/topic_insert.sql"))?,
+                &fix_parameters(&include_sql!("sql/topic_insert.sql"))?,
                 (
                     cluster,
                     name,
@@ -4526,7 +4526,7 @@ mod tests {
         assert_eq!(
             1,
             tx.execute(
-                &fix_parameters(&include_sql!("pg/register_broker.sql"))?,
+                &fix_parameters(&include_sql!("sql/register_broker.sql"))?,
                 &[cluster]
             )
             .await?
@@ -4539,7 +4539,7 @@ mod tests {
 
         let mut rows = tx
             .query(
-                &fix_parameters(&include_sql!("pg/topic_insert.sql"))?,
+                &fix_parameters(&include_sql!("sql/topic_insert.sql"))?,
                 (
                     cluster,
                     name,
@@ -4575,7 +4575,7 @@ mod tests {
         let name = "lite";
 
         _ = connection
-            .execute(&include_sql!("pg/register_broker.sql"), &[name])
+            .execute(&include_sql!("sql/register_broker.sql"), &[name])
             .await?;
 
         let mut rows = connection
