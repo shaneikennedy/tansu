@@ -13,6 +13,7 @@ version.workspace = true
 [features]
 dynostore = ["dep:object_store"]
 libsql = ["dep:libsql", "dep:deadpool"]
+mysql = ["dep:mysql_async", "dep:deadpool"]
 postgres = ["dep:tokio-postgres", "dep:deadpool", "dep:deadpool-postgres"]
 slatedb = ["dep:object_store", "dep:postcard", "dep:slatedb"]
 turso = ["dep:turso"]
@@ -33,6 +34,7 @@ futures-util.workspace = true
 futures.workspace = true
 glob.workspace = true
 libsql = { workspace = true, optional = true }
+mysql_async = { workspace = true, optional = true }
 object_store = { workspace = true, optional = true }
 opentelemetry-semantic-conventions.workspace = true
 opentelemetry.workspace = true

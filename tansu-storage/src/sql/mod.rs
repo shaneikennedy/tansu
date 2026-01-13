@@ -23,12 +23,32 @@ use std::{
 };
 
 #[cfg(any(feature = "libsql", feature = "postgres", feature = "turso"))]
-use std::{collections::BTreeMap, ops::Deref, sync::LazyLock};
+use std::sync::LazyLock;
+#[cfg(any(
+    feature = "libsql",
+    feature = "mysql",
+    feature = "postgres",
+    feature = "turso"
+))]
+use std::{collections::BTreeMap, ops::Deref};
 
-#[cfg(any(feature = "libsql", feature = "postgres", feature = "turso"))]
+#[cfg(feature = "mysql")]
+pub(crate) mod mysql;
+
+#[cfg(any(
+    feature = "libsql",
+    feature = "mysql",
+    feature = "postgres",
+    feature = "turso"
+))]
 pub(crate) struct Cache(pub BTreeMap<&'static str, String>);
 
-#[cfg(any(feature = "libsql", feature = "postgres", feature = "turso"))]
+#[cfg(any(
+    feature = "libsql",
+    feature = "mysql",
+    feature = "postgres",
+    feature = "turso"
+))]
 impl Deref for Cache {
     type Target = BTreeMap<&'static str, String>;
 
@@ -37,13 +57,18 @@ impl Deref for Cache {
     }
 }
 
-#[cfg(any(feature = "libsql", feature = "postgres", feature = "turso"))]
+#[cfg(any(
+    feature = "libsql",
+    feature = "mysql",
+    feature = "postgres",
+    feature = "turso"
+))]
 impl Cache {
     pub(crate) fn new(inner: BTreeMap<&'static str, String>) -> Self {
         Self(inner)
     }
 
-    #[cfg(any(feature = "postgres", feature = "turso"))]
+    #[cfg(any(feature = "mysql", feature = "postgres", feature = "turso"))]
     pub(crate) fn get(&self, key: &str) -> Result<&str> {
         self.0
             .get(key)

@@ -114,7 +114,7 @@
 use async_trait::async_trait;
 use bytes::{Bytes, TryGetError};
 
-#[cfg(any(feature = "libsql", feature = "postgres"))]
+#[cfg(any(feature = "libsql", feature = "mysql", feature = "postgres"))]
 use deadpool::managed::PoolError;
 #[cfg(feature = "dynostore")]
 use dynostore::DynoStore;
@@ -133,12 +133,15 @@ use opentelemetry::{
 };
 use opentelemetry_semantic_conventions::SCHEMA_URL;
 
+#[cfg(feature = "mysql")]
+use mysql::Mysql;
+
 #[cfg(feature = "postgres")]
 use pg::Postgres;
 
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-#[cfg(any(feature = "libsql", feature = "postgres"))]
+#[cfg(any(feature = "libsql", feature = "mysql", feature = "postgres"))]
 use std::error;
 use std::{
     array::TryFromSliceError,
@@ -197,6 +200,9 @@ mod dynostore;
 
 mod null;
 
+#[cfg(feature = "mysql")]
+mod mysql;
+
 #[cfg(feature = "postgres")]
 mod pg;
 
@@ -218,7 +224,12 @@ pub use service::{
 #[cfg(feature = "slatedb")]
 pub mod slate;
 
-#[cfg(any(feature = "libsql", feature = "postgres", feature = "turso"))]
+#[cfg(any(
+    feature = "libsql",
+    feature = "mysql",
+    feature = "postgres",
+    feature = "turso"
+))]
 pub(crate) mod sql;
 
 #[cfg(feature = "libsql")]
@@ -237,7 +248,7 @@ pub enum Error {
 
     ChronoParse(#[from] chrono::ParseError),
 
-    #[cfg(any(feature = "postgres", feature = "libsql"))]
+    #[cfg(any(feature = "mysql", feature = "postgres", feature = "libsql"))]
     DeadPoolBuild(#[from] deadpool::managed::BuildError),
 
     Decode(Bytes),
@@ -261,6 +272,9 @@ pub enum Error {
 
     #[cfg(feature = "libsql")]
     LibSql(Arc<libsql::Error>),
+
+    #[cfg(feature = "mysql")]
+    MysqlAsync(Arc<mysql_async::Error>),
 
     LessThanMaxTime {
         time: i64,
@@ -286,7 +300,7 @@ pub enum Error {
     PhantomCached(),
     Poison,
 
-    #[cfg(any(feature = "libsql", feature = "postgres"))]
+    #[cfg(any(feature = "libsql", feature = "mysql", feature = "postgres"))]
     Pool(Arc<Box<dyn error::Error + Send + Sync>>),
 
     #[cfg(feature = "slatedb")]
@@ -357,13 +371,20 @@ impl<T> From<PoisonError<T>> for Error {
     }
 }
 
-#[cfg(any(feature = "libsql", feature = "postgres"))]
+#[cfg(any(feature = "libsql", feature = "mysql", feature = "postgres"))]
 impl<E> From<PoolError<E>> for Error
 where
     E: error::Error + Send + Sync + 'static,
 {
     fn from(value: PoolError<E>) -> Self {
         Self::Pool(Arc::new(Box::new(value)))
+    }
+}
+
+#[cfg(feature = "mysql")]
+impl From<mysql_async::Error> for Error {
+    fn from(value: mysql_async::Error) -> Self {
+        Self::MysqlAsync(Arc::new(value))
     }
 }
 
@@ -1516,6 +1537,13 @@ impl<T> From<serde_json::Error> for UpdateError<T> {
     }
 }
 
+#[cfg(feature = "mysql")]
+impl<T> From<mysql_async::Error> for UpdateError<T> {
+    fn from(value: mysql_async::Error) -> Self {
+        Self::Error(Error::from(value))
+    }
+}
+
 #[cfg(feature = "postgres")]
 impl<T> From<tokio_postgres::error::Error> for UpdateError<T> {
     fn from(value: tokio_postgres::error::Error) -> Self {
@@ -1529,6 +1557,7 @@ impl<T> From<tokio_postgres::error::Error> for UpdateError<T> {
     not(any(
         feature = "dynostore",
         feature = "libsql",
+        feature = "mysql",
         feature = "postgres",
         feature = "slatedb",
         feature = "turso"
@@ -1537,6 +1566,9 @@ impl<T> From<tokio_postgres::error::Error> for UpdateError<T> {
 )]
 pub enum StorageContainer {
     Null(null::Engine),
+
+    #[cfg(feature = "mysql")]
+    Mysql(Mysql),
 
     #[cfg(feature = "postgres")]
     Postgres(Postgres),
@@ -1558,6 +1590,9 @@ impl Debug for StorageContainer {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
             Self::Null(_) => f.debug_tuple(stringify!(StorageContainer::Null)).finish(),
+
+            #[cfg(feature = "mysql")]
+            Self::Mysql(_) => f.debug_tuple(stringify!(StorageContainer::Mysql)).finish(),
 
             #[cfg(feature = "postgres")]
             Self::Postgres(_) => f
@@ -1884,6 +1919,9 @@ impl Storage for StorageContainer {
 
             Self::Null(engine) => engine.register_broker(broker_registration),
 
+            #[cfg(feature = "mysql")]
+            Self::Mysql(engine) => engine.register_broker(broker_registration),
+
             #[cfg(feature = "postgres")]
             Self::Postgres(engine) => engine.register_broker(broker_registration),
 
@@ -1918,6 +1956,9 @@ impl Storage for StorageContainer {
 
             Self::Null(engine) => engine.incremental_alter_resource(resource),
 
+            #[cfg(feature = "mysql")]
+            Self::Mysql(engine) => engine.incremental_alter_resource(resource),
+
             #[cfg(feature = "postgres")]
             Self::Postgres(engine) => engine.incremental_alter_resource(resource),
 
@@ -1948,6 +1989,9 @@ impl Storage for StorageContainer {
             Self::Lite(engine) => engine.create_topic(topic, validate_only),
 
             Self::Null(engine) => engine.create_topic(topic, validate_only),
+
+            #[cfg(feature = "mysql")]
+            Self::Mysql(engine) => engine.create_topic(topic, validate_only),
 
             #[cfg(feature = "postgres")]
             Self::Postgres(engine) => engine.create_topic(topic, validate_only),
@@ -1983,6 +2027,9 @@ impl Storage for StorageContainer {
 
             Self::Null(engine) => engine.delete_records(topics),
 
+            #[cfg(feature = "mysql")]
+            Self::Mysql(engine) => engine.delete_records(topics),
+
             #[cfg(feature = "postgres")]
             Self::Postgres(engine) => engine.delete_records(topics),
 
@@ -2014,6 +2061,9 @@ impl Storage for StorageContainer {
 
             Self::Null(engine) => engine.delete_topic(topic),
 
+            #[cfg(feature = "mysql")]
+            Self::Mysql(engine) => engine.delete_topic(topic),
+
             #[cfg(feature = "postgres")]
             Self::Postgres(engine) => engine.delete_topic(topic),
 
@@ -2044,6 +2094,9 @@ impl Storage for StorageContainer {
             Self::Lite(engine) => engine.brokers(),
 
             Self::Null(engine) => engine.brokers(),
+
+            #[cfg(feature = "mysql")]
+            Self::Mysql(engine) => engine.brokers(),
 
             #[cfg(feature = "postgres")]
             Self::Postgres(engine) => engine.brokers(),
@@ -2080,6 +2133,9 @@ impl Storage for StorageContainer {
             Self::Lite(engine) => engine.produce(transaction_id, topition, batch),
 
             Self::Null(engine) => engine.produce(transaction_id, topition, batch),
+
+            #[cfg(feature = "mysql")]
+            Self::Mysql(engine) => engine.produce(transaction_id, topition, batch),
 
             #[cfg(feature = "postgres")]
             Self::Postgres(engine) => engine.produce(transaction_id, topition, batch),
@@ -2121,6 +2177,9 @@ impl Storage for StorageContainer {
 
             Self::Null(engine) => engine.fetch(topition, offset, min_bytes, max_bytes, isolation),
 
+            #[cfg(feature = "mysql")]
+            Self::Mysql(engine) => engine.fetch(topition, offset, min_bytes, max_bytes, isolation),
+
             #[cfg(feature = "postgres")]
             Self::Postgres(engine) => {
                 engine.fetch(topition, offset, min_bytes, max_bytes, isolation)
@@ -2153,6 +2212,9 @@ impl Storage for StorageContainer {
             Self::Lite(engine) => engine.offset_stage(topition),
 
             Self::Null(engine) => engine.offset_stage(topition),
+
+            #[cfg(feature = "mysql")]
+            Self::Mysql(engine) => engine.offset_stage(topition),
 
             #[cfg(feature = "postgres")]
             Self::Postgres(engine) => engine.offset_stage(topition),
@@ -2188,6 +2250,9 @@ impl Storage for StorageContainer {
             Self::Lite(engine) => engine.list_offsets(isolation_level, offsets),
 
             Self::Null(engine) => engine.list_offsets(isolation_level, offsets),
+
+            #[cfg(feature = "mysql")]
+            Self::Mysql(engine) => engine.list_offsets(isolation_level, offsets),
 
             #[cfg(feature = "postgres")]
             Self::Postgres(engine) => engine.list_offsets(isolation_level, offsets),
@@ -2225,6 +2290,9 @@ impl Storage for StorageContainer {
 
             Self::Null(engine) => engine.offset_commit(group_id, retention_time_ms, offsets),
 
+            #[cfg(feature = "mysql")]
+            Self::Mysql(engine) => engine.offset_commit(group_id, retention_time_ms, offsets),
+
             #[cfg(feature = "postgres")]
             Self::Postgres(engine) => engine.offset_commit(group_id, retention_time_ms, offsets),
 
@@ -2255,6 +2323,9 @@ impl Storage for StorageContainer {
             Self::Lite(engine) => engine.committed_offset_topitions(group_id),
 
             Self::Null(engine) => engine.committed_offset_topitions(group_id),
+
+            #[cfg(feature = "mysql")]
+            Self::Mysql(engine) => engine.committed_offset_topitions(group_id),
 
             #[cfg(feature = "postgres")]
             Self::Postgres(engine) => engine.committed_offset_topitions(group_id),
@@ -2292,6 +2363,9 @@ impl Storage for StorageContainer {
 
             Self::Null(engine) => engine.offset_fetch(group_id, topics, require_stable),
 
+            #[cfg(feature = "mysql")]
+            Self::Mysql(engine) => engine.offset_fetch(group_id, topics, require_stable),
+
             #[cfg(feature = "postgres")]
             Self::Postgres(engine) => engine.offset_fetch(group_id, topics, require_stable),
 
@@ -2322,6 +2396,9 @@ impl Storage for StorageContainer {
             Self::Lite(engine) => engine.metadata(topics),
 
             Self::Null(engine) => engine.metadata(topics),
+
+            #[cfg(feature = "mysql")]
+            Self::Mysql(engine) => engine.metadata(topics),
 
             #[cfg(feature = "postgres")]
             Self::Postgres(engine) => engine.metadata(topics),
@@ -2358,6 +2435,9 @@ impl Storage for StorageContainer {
             Self::Lite(engine) => engine.describe_config(name, resource, keys),
 
             Self::Null(engine) => engine.describe_config(name, resource, keys),
+
+            #[cfg(feature = "mysql")]
+            Self::Mysql(engine) => engine.describe_config(name, resource, keys),
 
             #[cfg(feature = "postgres")]
             Self::Postgres(engine) => engine.describe_config(name, resource, keys),
@@ -2397,6 +2477,11 @@ impl Storage for StorageContainer {
 
             Self::Null(engine) => engine.describe_topic_partitions(topics, partition_limit, cursor),
 
+            #[cfg(feature = "mysql")]
+            Self::Mysql(engine) => {
+                engine.describe_topic_partitions(topics, partition_limit, cursor)
+            }
+
             #[cfg(feature = "postgres")]
             Self::Postgres(engine) => {
                 engine.describe_topic_partitions(topics, partition_limit, cursor)
@@ -2434,6 +2519,9 @@ impl Storage for StorageContainer {
 
             Self::Null(engine) => engine.list_groups(states_filter),
 
+            #[cfg(feature = "mysql")]
+            Self::Mysql(engine) => engine.list_groups(states_filter),
+
             #[cfg(feature = "postgres")]
             Self::Postgres(engine) => engine.list_groups(states_filter),
 
@@ -2467,6 +2555,9 @@ impl Storage for StorageContainer {
             Self::Lite(engine) => engine.delete_groups(group_ids),
 
             Self::Null(engine) => engine.delete_groups(group_ids),
+
+            #[cfg(feature = "mysql")]
+            Self::Mysql(engine) => engine.delete_groups(group_ids),
 
             #[cfg(feature = "postgres")]
             Self::Postgres(engine) => engine.delete_groups(group_ids),
@@ -2505,6 +2596,9 @@ impl Storage for StorageContainer {
 
             Self::Null(engine) => engine.describe_groups(group_ids, include_authorized_operations),
 
+            #[cfg(feature = "mysql")]
+            Self::Mysql(engine) => engine.describe_groups(group_ids, include_authorized_operations),
+
             #[cfg(feature = "postgres")]
             Self::Postgres(engine) => {
                 engine.describe_groups(group_ids, include_authorized_operations)
@@ -2542,6 +2636,9 @@ impl Storage for StorageContainer {
             Self::Lite(engine) => engine.update_group(group_id, detail, version),
 
             Self::Null(engine) => engine.update_group(group_id, detail, version),
+
+            #[cfg(feature = "mysql")]
+            Self::Mysql(engine) => engine.update_group(group_id, detail, version),
 
             #[cfg(feature = "postgres")]
             Self::Postgres(engine) => engine.update_group(group_id, detail, version),
@@ -2589,6 +2686,14 @@ impl Storage for StorageContainer {
             ),
 
             Self::Null(engine) => engine.init_producer(
+                transaction_id,
+                transaction_timeout_ms,
+                producer_id,
+                producer_epoch,
+            ),
+
+            #[cfg(feature = "mysql")]
+            Self::Mysql(engine) => engine.init_producer(
                 transaction_id,
                 transaction_timeout_ms,
                 producer_id,
@@ -2653,6 +2758,11 @@ impl Storage for StorageContainer {
                 engine.txn_add_offsets(transaction_id, producer_id, producer_epoch, group_id)
             }
 
+            #[cfg(feature = "mysql")]
+            Self::Mysql(engine) => {
+                engine.txn_add_offsets(transaction_id, producer_id, producer_epoch, group_id)
+            }
+
             #[cfg(feature = "postgres")]
             Self::Postgres(engine) => {
                 engine.txn_add_offsets(transaction_id, producer_id, producer_epoch, group_id)
@@ -2693,6 +2803,9 @@ impl Storage for StorageContainer {
 
             Self::Null(engine) => engine.txn_add_partitions(partitions),
 
+            #[cfg(feature = "mysql")]
+            Self::Mysql(engine) => engine.txn_add_partitions(partitions),
+
             #[cfg(feature = "postgres")]
             Self::Postgres(engine) => engine.txn_add_partitions(partitions),
 
@@ -2726,6 +2839,9 @@ impl Storage for StorageContainer {
             Self::Lite(engine) => engine.txn_offset_commit(offsets),
 
             Self::Null(engine) => engine.txn_offset_commit(offsets),
+
+            #[cfg(feature = "mysql")]
+            Self::Mysql(engine) => engine.txn_offset_commit(offsets),
 
             #[cfg(feature = "postgres")]
             Self::Postgres(engine) => engine.txn_offset_commit(offsets),
@@ -2770,6 +2886,11 @@ impl Storage for StorageContainer {
                 engine.txn_end(transaction_id, producer_id, producer_epoch, committed)
             }
 
+            #[cfg(feature = "mysql")]
+            Self::Mysql(engine) => {
+                engine.txn_end(transaction_id, producer_id, producer_epoch, committed)
+            }
+
             #[cfg(feature = "postgres")]
             Self::Postgres(engine) => {
                 engine.txn_end(transaction_id, producer_id, producer_epoch, committed)
@@ -2807,6 +2928,9 @@ impl Storage for StorageContainer {
 
             Self::Null(engine) => engine.maintain(now),
 
+            #[cfg(feature = "mysql")]
+            Self::Mysql(engine) => engine.maintain(now),
+
             #[cfg(feature = "postgres")]
             Self::Postgres(engine) => engine.maintain(now),
 
@@ -2838,6 +2962,9 @@ impl Storage for StorageContainer {
 
             Self::Null(engine) => engine.cluster_id().await,
 
+            #[cfg(feature = "mysql")]
+            Self::Mysql(engine) => engine.cluster_id().await,
+
             #[cfg(feature = "postgres")]
             Self::Postgres(engine) => engine.cluster_id().await,
 
@@ -2860,6 +2987,9 @@ impl Storage for StorageContainer {
 
             Self::Null(engine) => engine.node().await,
 
+            #[cfg(feature = "mysql")]
+            Self::Mysql(engine) => engine.node().await,
+
             #[cfg(feature = "postgres")]
             Self::Postgres(engine) => engine.node().await,
 
@@ -2881,6 +3011,9 @@ impl Storage for StorageContainer {
             Self::Lite(engine) => engine.advertised_listener().await,
 
             Self::Null(engine) => engine.advertised_listener().await,
+
+            #[cfg(feature = "mysql")]
+            Self::Mysql(engine) => engine.advertised_listener().await,
 
             #[cfg(feature = "postgres")]
             Self::Postgres(engine) => engine.advertised_listener().await,
@@ -2905,6 +3038,9 @@ impl Storage for StorageContainer {
             Self::Lite(engine) => engine.ping(),
 
             Self::Null(engine) => engine.ping(),
+
+            #[cfg(feature = "mysql")]
+            Self::Mysql(engine) => engine.ping(),
 
             #[cfg(feature = "postgres")]
             Self::Postgres(engine) => engine.ping(),
